@@ -226,7 +226,7 @@ def main():
         log("ERRORE: DISCORD_TOKEN mancante")
         log(f"Crea file .env in {Path.cwd()} con: DISCORD_TOKEN=tuo_token")
         if sys.stdin and sys.stdin.isatty():
-        input("\nPremi INVIO per uscire...")
+            input("\nPremi INVIO per uscire...")
         return
 
     log(f"Token: {len(token)} chars, inizia con {token[:10]}...")
@@ -246,7 +246,7 @@ def main():
         log(traceback.format_exc())
     finally:
         if sys.stdin and sys.stdin.isatty():
-        input("\nPremi INVIO per uscire...")
+            input("\nPremi INVIO per uscire...")
 
 
 if __name__ == "__main__":
