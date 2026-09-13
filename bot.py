@@ -34,7 +34,9 @@ if _LOCK_SOCK is None:
     sys.exit(1)
 
 os.environ.pop("DISCORD_TOKEN", None)
-load_dotenv(override=True)
+for env_path in ("/etc/secrets/.env", ".env"):
+    if os.path.exists(env_path):
+        load_dotenv(env_path, override=True)
 
 import discord
 from discord import app_commands
