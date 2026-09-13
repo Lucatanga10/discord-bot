@@ -33,9 +33,10 @@ if _LOCK_SOCK is None:
         input("\nPremi INVIO per uscire...")
     sys.exit(1)
 
-os.environ.pop("DISCORD_TOKEN", None)
-for env_path in ("/etc/secrets/.env", ".env"):
-    if os.path.exists(env_path):
+env_files = [p for p in ("/etc/secrets/.env", ".env") if os.path.exists(p)]
+if env_files:
+    os.environ.pop("DISCORD_TOKEN", None)
+    for env_path in env_files:
         load_dotenv(env_path, override=True)
 
 import discord
