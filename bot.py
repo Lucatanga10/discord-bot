@@ -29,7 +29,8 @@ if _LOCK_SOCK is None:
     print("Oppure killa tutti i python.exe:")
     print("  taskkill /F /IM python.exe")
     print("=" * 60)
-    input("\nPremi INVIO per uscire...")
+    if sys.stdin and sys.stdin.isatty():
+        input("\nPremi INVIO per uscire...")
     sys.exit(1)
 
 os.environ.pop("DISCORD_TOKEN", None)
@@ -222,6 +223,7 @@ def main():
     if not token:
         log("ERRORE: DISCORD_TOKEN mancante")
         log(f"Crea file .env in {Path.cwd()} con: DISCORD_TOKEN=tuo_token")
+        if sys.stdin and sys.stdin.isatty():
         input("\nPremi INVIO per uscire...")
         return
 
@@ -241,6 +243,7 @@ def main():
         import traceback
         log(traceback.format_exc())
     finally:
+        if sys.stdin and sys.stdin.isatty():
         input("\nPremi INVIO per uscire...")
 
 
