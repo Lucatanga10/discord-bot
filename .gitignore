@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+bot.log
+voice_state.json
