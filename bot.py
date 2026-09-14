@@ -161,18 +161,26 @@ async def slow_watchdog(client: discord.Client):
 @bot.event
 async def on_ready():
     log(f"Loggato come {bot.user} in {len(bot.guilds)} server")
+
+    saved = list(bot.tree.get_commands())
+    bot.tree.clear_commands(guild=None)
+    try:
+        await bot.tree.sync()
+        log("[sync] comandi globali cancellati su Discord")
+    except Exception as e:
+        log(f"[sync] errore clear globali: {e}")
+    for cmd in saved:
+        bot.tree.add_command(cmd)
+
     for guild in bot.guilds:
         try:
-            bot.tree.copy_global_to(guild=guild)
+            bot.tree.clear_commands(guild=guild)
+            for cmd in saved:
+                bot.tree.add_command(cmd, guild=guild)
             synced = await bot.tree.sync(guild=guild)
             log(f"[sync] {len(synced)} comandi in {guild.name}")
         except Exception as e:
             log(f"[sync] errore in {guild.name}: {e}")
-    try:
-        synced_global = await bot.tree.sync()
-        log(f"[sync] {len(synced_global)} comandi globali (visibili tra <1h)")
-    except Exception as e:
-        log(f"[sync] errore globale: {e}")
 
     state = load_state()
     for guild in bot.guilds:
