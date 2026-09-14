@@ -101,8 +101,6 @@ class Bot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        synced = await self.tree.sync()
-        log(f"Sincronizzati {len(synced)} comandi slash")
         self.loop.create_task(slow_watchdog(self))
 
 
@@ -163,6 +161,19 @@ async def slow_watchdog(client: discord.Client):
 @bot.event
 async def on_ready():
     log(f"Loggato come {bot.user} in {len(bot.guilds)} server")
+    for guild in bot.guilds:
+        try:
+            bot.tree.copy_global_to(guild=guild)
+            synced = await bot.tree.sync(guild=guild)
+            log(f"[sync] {len(synced)} comandi in {guild.name}")
+        except Exception as e:
+            log(f"[sync] errore in {guild.name}: {e}")
+    try:
+        synced_global = await bot.tree.sync()
+        log(f"[sync] {len(synced_global)} comandi globali (visibili tra <1h)")
+    except Exception as e:
+        log(f"[sync] errore globale: {e}")
+
     state = load_state()
     for guild in bot.guilds:
         cid = state.get(str(guild.id))
