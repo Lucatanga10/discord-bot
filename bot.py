@@ -159,6 +159,20 @@ async def slow_watchdog(client: discord.Client):
 
 
 @bot.event
+async def on_guild_join(guild: discord.Guild):
+    log(f"[guild_join] entrato in {guild.name}, sync comandi...")
+    try:
+        saved = list(bot.tree.get_commands())
+        bot.tree.clear_commands(guild=guild)
+        for cmd in saved:
+            bot.tree.add_command(cmd, guild=guild)
+        synced = await bot.tree.sync(guild=guild)
+        log(f"[guild_join] {len(synced)} comandi sincronizzati in {guild.name}")
+    except Exception as e:
+        log(f"[guild_join] errore: {e}")
+
+
+@bot.event
 async def on_ready():
     log(f"Loggato come {bot.user} in {len(bot.guilds)} server")
 
