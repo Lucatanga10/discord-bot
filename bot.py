@@ -3,11 +3,18 @@ import json
 import os
 import socket
 import sys
+import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+try:
+    import imageio_ffmpeg
+    FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
+except ImportError:
+    FFMPEG_PATH = "ffmpeg"
 
 
 def acquire_single_instance_lock(port: int = 47821) -> socket.socket | None:
@@ -124,7 +131,7 @@ async def try_join(guild: discord.Guild, channel_id: int) -> tuple[bool, str]:
 
     for attempt in range(1, 6):
         try:
-            await channel.connect(self_deaf=True, self_mute=True, reconnect=True, timeout=30)
+            await channel.connect(self_deaf=True, self_mute=False, reconnect=True, timeout=30)
             return True, f"Entrato in {channel.name}"
         except discord.errors.ConnectionClosed as e:
             log(f"Tentativo {attempt}/5 fallito (code {e.code}), riprovo...")
@@ -193,6 +200,68 @@ async def leave_cmd(interaction: discord.Interaction):
         await interaction.response.send_message("Uscito dal vocale.", ephemeral=True)
     else:
         await interaction.response.send_message("Non ero in nessun vocale.", ephemeral=True)
+
+
+@bot.tree.command(name="soundboard", description="Riproduce un file audio nel canale vocale")
+@app_commands.describe(file="File audio (mp3, mp4, wav, ogg, m4a...)")
+async def soundboard_cmd(interaction: discord.Interaction, file: discord.Attachment):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    guild = interaction.guild
+    if guild is None:
+        await interaction.followup.send("Solo dentro un server.", ephemeral=True)
+        return
+
+    vc = guild.voice_client
+    if not vc or not vc.is_connected():
+        member = interaction.user
+        if isinstance(member, discord.Member) and member.voice and member.voice.channel:
+            try:
+                vc = await member.voice.channel.connect(self_deaf=True, self_mute=False, reconnect=True, timeout=30)
+            except Exception as e:
+                await interaction.followup.send(f"Errore connessione: {e}", ephemeral=True)
+                return
+        else:
+            await interaction.followup.send("Bot non in vocale. Fai /join oppure entra tu in vocale.", ephemeral=True)
+            return
+
+    if vc.is_playing():
+        vc.stop()
+
+    suffix = Path(file.filename).suffix or ".bin"
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp.close()
+    try:
+        await file.save(tmp.name)
+    except Exception as e:
+        os.unlink(tmp.name)
+        await interaction.followup.send(f"Errore download file: {e}", ephemeral=True)
+        return
+
+    def cleanup(err):
+        if err:
+            log(f"[soundboard] errore playback: {err}")
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
+
+    try:
+        source = discord.FFmpegPCMAudio(tmp.name, executable=FFMPEG_PATH)
+        vc.play(source, after=cleanup)
+        await interaction.followup.send(f"Riproduco **{file.filename}** ({file.size // 1024} KB)", ephemeral=True)
+    except Exception as e:
+        cleanup(e)
+        await interaction.followup.send(f"Errore FFmpeg: {e}", ephemeral=True)
+
+
+@bot.tree.command(name="stop", description="Ferma riproduzione audio")
+async def stop_cmd(interaction: discord.Interaction):
+    vc = interaction.guild.voice_client if interaction.guild else None
+    if vc and vc.is_playing():
+        vc.stop()
+        await interaction.response.send_message("Fermato.", ephemeral=True)
+    else:
+        await interaction.response.send_message("Non stavo riproducendo nulla.", ephemeral=True)
 
 
 @bot.tree.command(name="status", description="Mostra stato bot")
