@@ -16,6 +16,13 @@ try:
 except ImportError:
     FFMPEG_PATH = "ffmpeg"
 
+try:
+    from discord.ext import voice_recv
+    VOICE_RECV_AVAILABLE = True
+except ImportError:
+    voice_recv = None
+    VOICE_RECV_AVAILABLE = False
+
 
 def acquire_single_instance_lock(port: int = 47821) -> socket.socket | None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -556,6 +563,130 @@ async def purge_cmd(
         await interaction.followup.send("Permessi insufficienti.", ephemeral=True)
     except discord.HTTPException as e:
         await interaction.followup.send(f"Errore Discord: {e}", ephemeral=True)
+
+
+CLIP_BUFFERS: dict[int, "collections.deque"] = {}
+CLIP_SINKS: dict[int, object] = {}
+CLIP_BUFFER_SECONDS = 60
+
+
+if VOICE_RECV_AVAILABLE:
+    import collections as _collections
+    import struct
+
+    class RollingSink(voice_recv.AudioSink):
+        def __init__(self, guild_id: int):
+            super().__init__()
+            self.guild_id = guild_id
+            self.buffer = _collections.deque(maxlen=48000 * 2 * 2 * CLIP_BUFFER_SECONDS)
+            CLIP_BUFFERS[guild_id] = self.buffer
+
+        def wants_opus(self) -> bool:
+            return False
+
+        def write(self, user, data):
+            if data and data.pcm:
+                self.buffer.extend(data.pcm)
+
+        def cleanup(self):
+            pass
+
+
+async def start_recording(guild: discord.Guild) -> tuple[bool, str]:
+    if not VOICE_RECV_AVAILABLE:
+        return False, "Estensione voice_recv non installata"
+    vc = guild.voice_client
+    if not vc or not vc.is_connected():
+        return False, "Bot non in vocale"
+    if not isinstance(vc, voice_recv.VoiceRecvClient):
+        try:
+            channel = vc.channel
+            await vc.disconnect(force=True)
+            vc = await channel.connect(cls=voice_recv.VoiceRecvClient, self_deaf=False, self_mute=False, reconnect=True)
+        except Exception as e:
+            return False, f"Errore reconnect con recv: {e}"
+    sink = RollingSink(guild.id)
+    CLIP_SINKS[guild.id] = sink
+    vc.listen(sink)
+    return True, "Registrazione buffer attiva (ultimi 60s)"
+
+
+@bot.tree.command(name="rec_start", description="Avvia registrazione rolling ultimi 60s della call")
+async def rec_start_cmd(interaction: discord.Interaction):
+    if not interaction.guild:
+        await interaction.response.send_message("Solo in server.", ephemeral=True)
+        return
+    ok, msg = await start_recording(interaction.guild)
+    await interaction.response.send_message(msg, ephemeral=True)
+
+
+@bot.tree.command(name="clip", description="Salva ultimi N secondi della call come mp3 e li manda in chat")
+@app_commands.describe(secondi="Durata clip da estrarre dal buffer (max 60)")
+async def clip_cmd(interaction: discord.Interaction, secondi: int = 30):
+    if not interaction.guild:
+        await interaction.response.send_message("Solo in server.", ephemeral=True)
+        return
+    if not VOICE_RECV_AVAILABLE:
+        await interaction.response.send_message("Estensione voice_recv non installata.", ephemeral=True)
+        return
+    buffer = CLIP_BUFFERS.get(interaction.guild.id)
+    if buffer is None or len(buffer) == 0:
+        await interaction.response.send_message("Nessun buffer attivo. Fai `/rec_start` prima.", ephemeral=True)
+        return
+
+    secondi = max(1, min(secondi, CLIP_BUFFER_SECONDS))
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    sample_rate = 48000
+    channels = 2
+    bytes_per_sample = 2
+    bytes_needed = sample_rate * channels * bytes_per_sample * secondi
+    data = bytes(list(buffer)[-bytes_needed:])
+
+    raw_path = tempfile.NamedTemporaryFile(delete=False, suffix=".pcm")
+    raw_path.write(data)
+    raw_path.close()
+    mp3_path = raw_path.name + ".mp3"
+
+    import subprocess
+    try:
+        subprocess.run(
+            [
+                FFMPEG_PATH, "-y",
+                "-f", "s16le", "-ar", str(sample_rate), "-ac", str(channels),
+                "-i", raw_path.name,
+                "-b:a", "96k",
+                mp3_path,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        try:
+            dm = await interaction.user.create_dm()
+            await dm.send(
+                content=f"Clip {secondi}s dalla call:",
+                file=discord.File(mp3_path, filename=f"clip_{secondi}s.mp3"),
+            )
+            await interaction.followup.send(f"Clip inviata in DM ({secondi}s).", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "Non riesco a mandarti DM (li hai chiusi). Aprili nelle impostazioni server.",
+                ephemeral=True,
+            )
+    except subprocess.CalledProcessError as e:
+        await interaction.followup.send(f"Errore FFmpeg: {e.stderr.decode()[:500]}", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"Errore: {e}", ephemeral=True)
+    finally:
+        try:
+            os.unlink(raw_path.name)
+        except Exception:
+            pass
+        try:
+            os.unlink(mp3_path)
+        except Exception:
+            pass
 
 
 @bot.tree.command(name="stop", description="Ferma riproduzione audio")
