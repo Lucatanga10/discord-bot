@@ -596,17 +596,24 @@ if VOICE_RECV_AVAILABLE:
             super().__init__()
             self.guild_id = guild_id
             self.buffer = _collections.deque(maxlen=48000 * 2 * 2 * CLIP_BUFFER_SECONDS)
+            self.packet_count = 0
+            self.last_log_at = 0
             CLIP_BUFFERS[guild_id] = self.buffer
 
         def wants_opus(self) -> bool:
             return False
 
         def write(self, user, data):
+            self.packet_count += 1
+            if self.packet_count == 1:
+                log(f"[sink] PRIMO pacchetto ricevuto da user={user} pcm_len={len(data.pcm) if data and data.pcm else 0}")
+            if self.packet_count % 500 == 0:
+                log(f"[sink] {self.packet_count} pacchetti, buffer={len(self.buffer)} bytes")
             if data and data.pcm:
                 self.buffer.extend(data.pcm)
 
         def cleanup(self):
-            pass
+            log(f"[sink] cleanup, ricevuti {self.packet_count} pacchetti totali")
 
 
 async def start_recording(guild: discord.Guild) -> tuple[bool, str]:
@@ -636,9 +643,10 @@ async def start_recording(guild: discord.Guild) -> tuple[bool, str]:
     CLIP_SINKS[guild.id] = sink
     try:
         vc.listen(sink)
+        log(f"[rec] listen() chiamato con RollingSink su {type(vc).__name__}")
     except Exception as e:
         return False, f"Errore listen: {e}"
-    return True, "Registrazione buffer attiva. Aspetta 30-60s poi /clip"
+    return True, "Registrazione buffer attiva. Parla in call, poi /clip"
 
 
 @bot.tree.command(name="rec_start", description="Avvia registrazione rolling ultimi 60s della call")
