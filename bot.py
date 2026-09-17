@@ -287,12 +287,18 @@ async def soundboard_cmd(interaction: discord.Interaction, file: discord.Attachm
         await interaction.followup.send(f"Errore FFmpeg: {e}", ephemeral=True)
 
 
-@bot.tree.command(name="purge", description="Cancella ultimi N messaggi di un utente nel canale")
+@bot.tree.command(name="purge", description="Cancella messaggi recenti di un utente nel canale")
 @app_commands.describe(
     user="Utente di cui cancellare i messaggi",
-    amount="Quanti messaggi indietro cercare (default 100, max 500)",
+    minuti="Cancella solo messaggi degli ultimi X minuti (default 5)",
+    scan="Quanti messaggi indietro cercare (default 200, max 500)",
 )
-async def purge_cmd(interaction: discord.Interaction, user: discord.User, amount: int = 100):
+async def purge_cmd(
+    interaction: discord.Interaction,
+    user: discord.User,
+    minuti: int = 5,
+    scan: int = 200,
+):
     if not interaction.guild:
         await interaction.response.send_message("Solo in server.", ephemeral=True)
         return
@@ -310,17 +316,25 @@ async def purge_cmd(interaction: discord.Interaction, user: discord.User, amount
         await interaction.response.send_message("Ti manca permesso **Gestisci Messaggi**.", ephemeral=True)
         return
 
-    amount = max(1, min(amount, 500))
+    minuti = max(1, min(minuti, 60 * 24 * 13))
+    scan = max(1, min(scan, 500))
+
+    from datetime import timedelta, timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minuti)
+
     await interaction.response.defer(ephemeral=True, thinking=True)
+
+    def check(m: discord.Message) -> bool:
+        return m.author.id == user.id and m.created_at >= cutoff
 
     try:
         deleted = await interaction.channel.purge(
-            limit=amount,
-            check=lambda m: m.author.id == user.id,
+            limit=scan,
+            check=check,
             bulk=True,
         )
         await interaction.followup.send(
-            f"Cancellati **{len(deleted)}** messaggi di **{user.name}** (cercato ultimi {amount}).",
+            f"Cancellati **{len(deleted)}** messaggi di **{user.name}** degli ultimi {minuti} min.",
             ephemeral=True,
         )
     except discord.Forbidden:
