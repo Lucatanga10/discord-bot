@@ -19,9 +19,26 @@ except ImportError:
 try:
     from discord.ext import voice_recv
     VOICE_RECV_AVAILABLE = True
-except ImportError:
+except ImportError as _e:
     voice_recv = None
     VOICE_RECV_AVAILABLE = False
+    print(f"[boot] voice_recv non disponibile: {_e}")
+
+try:
+    import discord.opus
+    if not discord.opus.is_loaded():
+        for lib_name in ("libopus.so.0", "libopus.so", "opus"):
+            try:
+                discord.opus.load_opus(lib_name)
+                if discord.opus.is_loaded():
+                    print(f"[boot] libopus caricata: {lib_name}")
+                    break
+            except Exception:
+                continue
+    if not discord.opus.is_loaded():
+        print("[boot] ATTENZIONE: libopus NON caricata, voice recv non funzionera")
+except Exception as _e:
+    print(f"[boot] errore load opus: {_e}")
 
 
 def acquire_single_instance_lock(port: int = 47821) -> socket.socket | None:
