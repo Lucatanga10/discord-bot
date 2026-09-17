@@ -213,19 +213,30 @@ async def _connect_channel(guild, channel_id: int) -> tuple[bool, str]:
     last_err = ""
     for attempt in range(1, 7):
         try:
-            await channel.connect(reconnect=True, timeout=30)
+            await channel.connect(reconnect=True, timeout=45)
+            for _ in range(20):
+                vc = guild.voice_client
+                if vc and vc.is_connected():
+                    break
+                await asyncio.sleep(0.5)
+            vc = guild.voice_client
+            if not vc or not vc.is_connected():
+                log(f"[connect] {attempt}/6 non stable dopo connect, retry")
+                await _force_disconnect(guild)
+                continue
             try:
                 await guild.change_voice_state(channel=channel, self_deaf=False, self_mute=False)
             except Exception:
                 pass
-            log(f"[connect] entrato in {channel.name} (tentativo {attempt})")
+            log(f"[connect] entrato in {channel.name} (tentativo {attempt}, is_connected={vc.is_connected()})")
             return True, f"Entrato in {channel.name}"
         except discord.ClientException as e:
-            log(f"[connect] {attempt}/6 ClientException: {e}, disconnect e riprovo")
+            log(f"[connect] {attempt}/6 ClientException: {e}")
             await _force_disconnect(guild)
         except Exception as e:
             last_err = f"{type(e).__name__}: {e}"
             log(f"[connect] {attempt}/6 errore: {last_err}")
+            await _force_disconnect(guild)
             await asyncio.sleep(2 * attempt)
     return False, f"Impossibile connettersi. Ultimo errore: {last_err}"
 
