@@ -594,21 +594,34 @@ if VOICE_RECV_AVAILABLE:
 
 async def start_recording(guild: discord.Guild) -> tuple[bool, str]:
     if not VOICE_RECV_AVAILABLE:
-        return False, "Estensione voice_recv non installata"
+        return False, "Estensione voice_recv non installata (controlla log Render per errori pip)"
     vc = guild.voice_client
     if not vc or not vc.is_connected():
-        return False, "Bot non in vocale"
+        return False, "Bot non in vocale. Fai /join prima."
+    channel = vc.channel
+    log(f"[rec] vc type: {type(vc).__name__}, self_deaf: {getattr(vc, 'self_deaf', '?')}")
     if not isinstance(vc, voice_recv.VoiceRecvClient):
+        log("[rec] reconnect come VoiceRecvClient")
         try:
-            channel = vc.channel
             await vc.disconnect(force=True)
-            vc = await channel.connect(cls=voice_recv.VoiceRecvClient, self_deaf=False, self_mute=False, reconnect=True)
+            await asyncio.sleep(1)
+            vc = await channel.connect(cls=voice_recv.VoiceRecvClient, self_deaf=False, self_mute=False, reconnect=True, timeout=30)
+            log("[rec] reconnect OK")
         except Exception as e:
             return False, f"Errore reconnect con recv: {e}"
+    else:
+        try:
+            await guild.change_voice_state(channel=channel, self_deaf=False, self_mute=False)
+            log("[rec] tolta sordita'")
+        except Exception as e:
+            log(f"[rec] errore change_voice_state: {e}")
     sink = RollingSink(guild.id)
     CLIP_SINKS[guild.id] = sink
-    vc.listen(sink)
-    return True, "Registrazione buffer attiva (ultimi 60s)"
+    try:
+        vc.listen(sink)
+    except Exception as e:
+        return False, f"Errore listen: {e}"
+    return True, "Registrazione buffer attiva. Aspetta 30-60s poi /clip"
 
 
 @bot.tree.command(name="rec_start", description="Avvia registrazione rolling ultimi 60s della call")
