@@ -632,13 +632,35 @@ async def start_recording(guild: discord.Guild) -> tuple[bool, str]:
             vc.stop_listening()
         except Exception:
             pass
-    sink = RollingSink(guild.id)
-    CLIP_SINKS[guild.id] = sink
-    try:
-        vc.listen(sink)
-        log(f"[rec] listen() chiamato con RollingSink")
-    except Exception as e:
-        return False, f"Errore listen: {e}"
+
+    def start_new_sink():
+        sink = RollingSink(guild.id)
+        CLIP_SINKS[guild.id] = sink
+
+        def after(exc):
+            log(f"[rec] listen terminato: {exc}")
+            if guild.voice_client and guild.voice_client.is_connected() and isinstance(guild.voice_client, voice_recv.VoiceRecvClient):
+                log("[rec] auto-restart sink tra 2s")
+                async def _restart():
+                    await asyncio.sleep(2)
+                    try:
+                        new_sink = RollingSink(guild.id)
+                        merged = list(sink.buffer)
+                        new_sink.buffer.extend(merged)
+                        CLIP_SINKS[guild.id] = new_sink
+                        guild.voice_client.listen(new_sink, after=after)
+                        log("[rec] auto-restart OK")
+                    except Exception as e:
+                        log(f"[rec] auto-restart fallito: {e}")
+                asyncio.run_coroutine_threadsafe(_restart(), bot.loop)
+
+        try:
+            vc.listen(sink, after=after)
+            log(f"[rec] listen() con after callback + auto-restart")
+        except Exception as e:
+            log(f"[rec] listen fallito: {e}")
+
+    start_new_sink()
     return True, "Registrazione buffer attiva. Parla in call, poi /clip"
 
 
