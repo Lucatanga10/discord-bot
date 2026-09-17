@@ -287,6 +287,48 @@ async def soundboard_cmd(interaction: discord.Interaction, file: discord.Attachm
         await interaction.followup.send(f"Errore FFmpeg: {e}", ephemeral=True)
 
 
+@bot.tree.command(name="purge", description="Cancella ultimi N messaggi di un utente nel canale")
+@app_commands.describe(
+    user="Utente di cui cancellare i messaggi",
+    amount="Quanti messaggi indietro cercare (default 100, max 500)",
+)
+async def purge_cmd(interaction: discord.Interaction, user: discord.User, amount: int = 100):
+    if not interaction.guild:
+        await interaction.response.send_message("Solo in server.", ephemeral=True)
+        return
+    if not isinstance(interaction.channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)):
+        await interaction.response.send_message("Canale non supportato.", ephemeral=True)
+        return
+
+    perms = interaction.channel.permissions_for(interaction.guild.me)
+    if not perms.manage_messages:
+        await interaction.response.send_message("Manca permesso **Gestisci Messaggi** al bot.", ephemeral=True)
+        return
+
+    caller_perms = interaction.channel.permissions_for(interaction.user)
+    if not caller_perms.manage_messages:
+        await interaction.response.send_message("Ti manca permesso **Gestisci Messaggi**.", ephemeral=True)
+        return
+
+    amount = max(1, min(amount, 500))
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    try:
+        deleted = await interaction.channel.purge(
+            limit=amount,
+            check=lambda m: m.author.id == user.id,
+            bulk=True,
+        )
+        await interaction.followup.send(
+            f"Cancellati **{len(deleted)}** messaggi di **{user.name}** (cercato ultimi {amount}).",
+            ephemeral=True,
+        )
+    except discord.Forbidden:
+        await interaction.followup.send("Permessi insufficienti.", ephemeral=True)
+    except discord.HTTPException as e:
+        await interaction.followup.send(f"Errore Discord: {e}", ephemeral=True)
+
+
 @bot.tree.command(name="stop", description="Ferma riproduzione audio")
 async def stop_cmd(interaction: discord.Interaction):
     vc = interaction.guild.voice_client if interaction.guild else None
