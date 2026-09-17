@@ -389,6 +389,109 @@ async def mute_chat_list_cmd(interaction: discord.Interaction):
     await interaction.response.send_message("Silenziati:\n" + "\n".join(lines), ephemeral=True)
 
 
+TYPING_TASKS: dict[int, asyncio.Task] = {}
+
+
+async def _typing_loop(user: discord.User, duration_sec: int):
+    import random
+    end = asyncio.get_event_loop().time() + duration_sec
+    try:
+        dm = await user.create_dm()
+        while asyncio.get_event_loop().time() < end:
+            try:
+                await dm.trigger_typing()
+            except Exception:
+                pass
+            await asyncio.sleep(random.uniform(4, 8))
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        log(f"[typing] errore: {e}")
+
+
+@bot.tree.command(name="typing_ghost", description="Fa apparire 'il bot sta scrivendo...' in DM di un utente per X minuti")
+@app_commands.describe(user="Utente target (bot manda typing nel suo DM)", minuti="Durata in minuti (max 60)")
+async def typing_ghost_cmd(interaction: discord.Interaction, user: discord.User, minuti: int = 5):
+    caller_perms = interaction.channel.permissions_for(interaction.user) if interaction.channel else None
+    if not caller_perms or not caller_perms.manage_messages:
+        await interaction.response.send_message("Ti manca permesso **Gestisci Messaggi**.", ephemeral=True)
+        return
+    minuti = max(1, min(minuti, 60))
+    if user.id in TYPING_TASKS and not TYPING_TASKS[user.id].done():
+        TYPING_TASKS[user.id].cancel()
+    task = bot.loop.create_task(_typing_loop(user, minuti * 60))
+    TYPING_TASKS[user.id] = task
+    await interaction.response.send_message(
+        f"Ora **{user.name}** vede '{bot.user.name} sta scrivendo...' nei suoi DM per {minuti} min.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="typing_stop", description="Ferma typing_ghost su un utente")
+@app_commands.describe(user="Utente su cui fermare il typing")
+async def typing_stop_cmd(interaction: discord.Interaction, user: discord.User):
+    caller_perms = interaction.channel.permissions_for(interaction.user) if interaction.channel else None
+    if not caller_perms or not caller_perms.manage_messages:
+        await interaction.response.send_message("Ti manca permesso **Gestisci Messaggi**.", ephemeral=True)
+        return
+    task = TYPING_TASKS.get(user.id)
+    if task and not task.done():
+        task.cancel()
+        await interaction.response.send_message(f"Fermato typing su **{user.name}**.", ephemeral=True)
+    else:
+        await interaction.response.send_message("Non c'era nessun typing attivo per lui.", ephemeral=True)
+
+
+COLORS = {
+    "rosso": 0xED4245,
+    "verde": 0x57F287,
+    "blu": 0x5865F2,
+    "giallo": 0xFEE75C,
+    "viola": 0x9B59B6,
+    "arancione": 0xE67E22,
+    "nero": 0x2C2F33,
+    "bianco": 0xFFFFFF,
+    "grigio": 0x99AAB5,
+    "rosa": 0xEB459E,
+}
+
+
+@bot.tree.command(name="fake_dm", description="Manda DM con embed customizzato + link server a un utente")
+@app_commands.describe(
+    user="Destinatario DM (deve stare nel server)",
+    titolo="Titolo embed",
+    descrizione="Testo dentro embed",
+    colore="Colore embed (rosso, verde, blu, giallo, viola, arancione, nero, bianco, grigio, rosa)",
+    invito="URL invito Discord (opzionale, genera preview server)",
+)
+async def fake_dm_cmd(
+    interaction: discord.Interaction,
+    user: discord.User,
+    titolo: str,
+    descrizione: str,
+    colore: str = "blu",
+    invito: str | None = None,
+):
+    caller_perms = interaction.channel.permissions_for(interaction.user) if interaction.channel else None
+    if not caller_perms or not caller_perms.manage_messages:
+        await interaction.response.send_message("Ti manca permesso **Gestisci Messaggi**.", ephemeral=True)
+        return
+
+    color_int = COLORS.get(colore.lower().strip(), COLORS["blu"])
+    embed = discord.Embed(title=titolo, description=descrizione, color=color_int)
+    embed.set_footer(text="Discord")
+
+    try:
+        dm = await user.create_dm()
+        content = invito if invito else None
+        await dm.send(content=content, embed=embed)
+        await interaction.response.send_message(f"DM inviato a **{user.name}**.", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message(f"**{user.name}** ha DM chiusi, non posso mandare.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"Errore: {e}", ephemeral=True)
+
+
 @bot.tree.command(name="purge", description="Cancella messaggi recenti di un utente nel canale")
 @app_commands.describe(
     user="Utente di cui cancellare i messaggi",
