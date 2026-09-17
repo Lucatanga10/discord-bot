@@ -558,12 +558,22 @@ async def _clip_callback(sink, requester: discord.User, seconds_wanted: int):
 
 @bot.slash_command(name="rec_start", description="Avvia registrazione della call")
 async def rec_start_cmd(ctx: discord.ApplicationContext):
+    await ctx.defer(ephemeral=True)
     vc = ctx.guild.voice_client
-    if not vc or not vc.is_connected():
-        await ctx.respond("Bot non in call. Fai /join.", ephemeral=True)
-        return
+    if not vc:
+        cid = load_state().get(str(ctx.guild_id))
+        if cid:
+            ok, msg = await _connect_channel(ctx.guild, int(cid))
+            if ok:
+                vc = ctx.guild.voice_client
+            else:
+                await ctx.followup.send(f"Bot non in call e reconnect fallito: {msg}", ephemeral=True)
+                return
+        else:
+            await ctx.followup.send("Bot non in call. Fai /join prima.", ephemeral=True)
+            return
     if ctx.guild.id in CLIP_RECORDINGS:
-        await ctx.respond("Registrazione gia' attiva.", ephemeral=True)
+        await ctx.followup.send("Registrazione gia' attiva.", ephemeral=True)
         return
 
     sink = discord.sinks.MP3Sink()
@@ -575,10 +585,10 @@ async def rec_start_cmd(ctx: discord.ApplicationContext):
     try:
         vc.start_recording(sink, noop_after, ctx.channel)
         log(f"[rec] avviata in {vc.channel.name}")
-        await ctx.respond("Registrazione ON. Parla in call, poi /clip.", ephemeral=True)
+        await ctx.followup.send("Registrazione ON. Parla in call, poi /clip.", ephemeral=True)
     except Exception as e:
         CLIP_RECORDINGS.pop(ctx.guild.id, None)
-        await ctx.respond(f"Errore: {e}", ephemeral=True)
+        await ctx.followup.send(f"Errore: {e}", ephemeral=True)
 
 
 @bot.slash_command(name="clip", description="Salva ultimi N secondi come mp3 in DM")
@@ -586,16 +596,15 @@ async def clip_cmd(
     ctx: discord.ApplicationContext,
     secondi: discord.Option(int, "Durata clip", default=30),
 ):
+    await ctx.defer(ephemeral=True)
     vc = ctx.guild.voice_client
-    if not vc or not vc.is_connected():
-        await ctx.respond("Bot non in call.", ephemeral=True)
+    if not vc:
+        await ctx.followup.send("Bot non in call.", ephemeral=True)
         return
     if ctx.guild.id not in CLIP_RECORDINGS:
-        await ctx.respond("Fai /rec_start prima.", ephemeral=True)
+        await ctx.followup.send("Fai /rec_start prima.", ephemeral=True)
         return
-
     secondi = max(1, min(secondi, 600))
-    await ctx.defer(ephemeral=True)
 
     requester = ctx.author
     try:
