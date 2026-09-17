@@ -52,6 +52,7 @@ from flask import Flask
 
 
 STATE_FILE = Path("voice_state.json")
+MUTED_FILE = Path("muted_chat.json")
 LOG_FILE = Path("bot.log")
 
 
@@ -78,6 +79,40 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state))
 
 
+def load_muted() -> dict:
+    if MUTED_FILE.exists():
+        try:
+            return json.loads(MUTED_FILE.read_text())
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def save_muted(data: dict) -> None:
+    MUTED_FILE.write_text(json.dumps(data))
+
+
+def is_chat_muted(guild_id: int, user_id: int) -> bool:
+    data = load_muted()
+    return user_id in set(data.get(str(guild_id), []))
+
+
+def add_chat_muted(guild_id: int, user_id: int) -> None:
+    data = load_muted()
+    lst = set(data.get(str(guild_id), []))
+    lst.add(user_id)
+    data[str(guild_id)] = list(lst)
+    save_muted(data)
+
+
+def remove_chat_muted(guild_id: int, user_id: int) -> None:
+    data = load_muted()
+    lst = set(data.get(str(guild_id), []))
+    lst.discard(user_id)
+    data[str(guild_id)] = list(lst)
+    save_muted(data)
+
+
 app = Flask(__name__)
 
 
@@ -93,6 +128,7 @@ def run_web():
 
 intents = discord.Intents.default()
 intents.voice_states = True
+intents.guild_messages = True
 
 
 class Bot(discord.Client):
@@ -285,6 +321,72 @@ async def soundboard_cmd(interaction: discord.Interaction, file: discord.Attachm
     except Exception as e:
         cleanup(e)
         await interaction.followup.send(f"Errore FFmpeg: {e}", ephemeral=True)
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    if not message.guild or message.author.bot:
+        return
+    if is_chat_muted(message.guild.id, message.author.id):
+        try:
+            await message.delete()
+        except discord.Forbidden:
+            log(f"[mute-chat] no perms to delete in {message.channel} ({message.guild.name})")
+        except discord.NotFound:
+            pass
+        except Exception as e:
+            log(f"[mute-chat] errore delete: {e}")
+
+
+@bot.tree.command(name="mute-chat", description="Cancella automaticamente ogni messaggio dell'utente")
+@app_commands.describe(user="Utente da silenziare in chat")
+async def mute_chat_cmd(interaction: discord.Interaction, user: discord.User):
+    if not interaction.guild:
+        await interaction.response.send_message("Solo in server.", ephemeral=True)
+        return
+    caller_perms = interaction.channel.permissions_for(interaction.user) if interaction.channel else None
+    if not caller_perms or not caller_perms.manage_messages:
+        await interaction.response.send_message("Ti manca permesso **Gestisci Messaggi**.", ephemeral=True)
+        return
+    add_chat_muted(interaction.guild.id, user.id)
+    await interaction.response.send_message(
+        f"OK: ora cancello ogni messaggio di **{user.name}** finche' non fai `/unmute-chat`.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="unmute-chat", description="Ferma cancellazione automatica dei messaggi")
+@app_commands.describe(user="Utente da riabilitare in chat")
+async def unmute_chat_cmd(interaction: discord.Interaction, user: discord.User):
+    if not interaction.guild:
+        await interaction.response.send_message("Solo in server.", ephemeral=True)
+        return
+    caller_perms = interaction.channel.permissions_for(interaction.user) if interaction.channel else None
+    if not caller_perms or not caller_perms.manage_messages:
+        await interaction.response.send_message("Ti manca permesso **Gestisci Messaggi**.", ephemeral=True)
+        return
+    remove_chat_muted(interaction.guild.id, user.id)
+    await interaction.response.send_message(
+        f"OK: **{user.name}** puo' scrivere di nuovo.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="mute-chat-list", description="Mostra utenti attualmente silenziati")
+async def mute_chat_list_cmd(interaction: discord.Interaction):
+    if not interaction.guild:
+        await interaction.response.send_message("Solo in server.", ephemeral=True)
+        return
+    data = load_muted()
+    ids = data.get(str(interaction.guild.id), [])
+    if not ids:
+        await interaction.response.send_message("Nessun utente silenziato.", ephemeral=True)
+        return
+    lines = []
+    for uid in ids:
+        u = interaction.guild.get_member(uid)
+        lines.append(f"- {u.mention if u else uid}")
+    await interaction.response.send_message("Silenziati:\n" + "\n".join(lines), ephemeral=True)
 
 
 @bot.tree.command(name="purge", description="Cancella messaggi recenti di un utente nel canale")
