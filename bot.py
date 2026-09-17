@@ -187,9 +187,10 @@ async def try_join(guild: discord.Guild, channel_id: int) -> tuple[bool, str]:
         await vc.move_to(channel)
         return True, f"Spostato in {channel.name}"
 
+    conn_cls = voice_recv.VoiceRecvClient if VOICE_RECV_AVAILABLE else discord.VoiceClient
     for attempt in range(1, 6):
         try:
-            await channel.connect(self_deaf=True, self_mute=False, reconnect=True, timeout=30)
+            await channel.connect(cls=conn_cls, self_deaf=False, self_mute=False, reconnect=True, timeout=30)
             return True, f"Entrato in {channel.name}"
         except discord.errors.ConnectionClosed as e:
             log(f"Tentativo {attempt}/5 fallito (code {e.code}), riprovo...")
@@ -618,32 +619,28 @@ if VOICE_RECV_AVAILABLE:
 
 async def start_recording(guild: discord.Guild) -> tuple[bool, str]:
     if not VOICE_RECV_AVAILABLE:
-        return False, "Estensione voice_recv non installata (controlla log Render per errori pip)"
+        return False, "Estensione voice_recv non installata"
     vc = guild.voice_client
     if not vc or not vc.is_connected():
         return False, "Bot non in vocale. Fai /join prima."
     channel = vc.channel
-    log(f"[rec] vc type: {type(vc).__name__}, self_deaf: {getattr(vc, 'self_deaf', '?')}")
+    log(f"[rec] vc type: {type(vc).__name__}")
     if not isinstance(vc, voice_recv.VoiceRecvClient):
-        log("[rec] reconnect come VoiceRecvClient")
+        return False, "VoiceClient sbagliato. Fai /leave poi /join di nuovo (ora usa VoiceRecvClient dall'inizio)."
+    try:
+        await guild.change_voice_state(channel=channel, self_deaf=False, self_mute=False)
+    except Exception as e:
+        log(f"[rec] change_voice_state warning: {e}")
+    if guild.id in CLIP_SINKS:
         try:
-            await vc.disconnect(force=True)
-            await asyncio.sleep(1)
-            vc = await channel.connect(cls=voice_recv.VoiceRecvClient, self_deaf=False, self_mute=False, reconnect=True, timeout=30)
-            log("[rec] reconnect OK")
-        except Exception as e:
-            return False, f"Errore reconnect con recv: {e}"
-    else:
-        try:
-            await guild.change_voice_state(channel=channel, self_deaf=False, self_mute=False)
-            log("[rec] tolta sordita'")
-        except Exception as e:
-            log(f"[rec] errore change_voice_state: {e}")
+            vc.stop_listening()
+        except Exception:
+            pass
     sink = RollingSink(guild.id)
     CLIP_SINKS[guild.id] = sink
     try:
         vc.listen(sink)
-        log(f"[rec] listen() chiamato con RollingSink su {type(vc).__name__}")
+        log(f"[rec] listen() chiamato con RollingSink")
     except Exception as e:
         return False, f"Errore listen: {e}"
     return True, "Registrazione buffer attiva. Parla in call, poi /clip"
