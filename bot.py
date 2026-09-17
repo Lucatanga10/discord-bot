@@ -397,16 +397,26 @@ async def _typing_loop(user: discord.User, duration_sec: int):
     end = asyncio.get_event_loop().time() + duration_sec
     try:
         dm = await user.create_dm()
+        log(f"[typing] avviato per {user.name} ({duration_sec}s)")
         while asyncio.get_event_loop().time() < end:
             try:
-                await dm.trigger_typing()
-            except Exception:
-                pass
-            await asyncio.sleep(random.uniform(4, 8))
+                async with dm.typing():
+                    await asyncio.sleep(random.uniform(6, 9))
+            except AttributeError:
+                try:
+                    await dm.trigger_typing()
+                except Exception as e:
+                    log(f"[typing] trigger fallback errore: {e}")
+                await asyncio.sleep(random.uniform(4, 8))
+            except Exception as e:
+                log(f"[typing] ciclo errore: {e}")
+                await asyncio.sleep(3)
+        log(f"[typing] finito per {user.name}")
     except asyncio.CancelledError:
+        log(f"[typing] cancellato per {user.name}")
         return
     except Exception as e:
-        log(f"[typing] errore: {e}")
+        log(f"[typing] fatal: {e}")
 
 
 @bot.tree.command(name="typing_ghost", description="Fa apparire 'il bot sta scrivendo...' in DM di un utente per X minuti")
