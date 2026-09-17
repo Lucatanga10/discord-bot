@@ -626,11 +626,7 @@ async def start_recording(guild: discord.Guild) -> tuple[bool, str]:
     channel = vc.channel
     log(f"[rec] vc type: {type(vc).__name__}")
     if not isinstance(vc, voice_recv.VoiceRecvClient):
-        return False, "VoiceClient sbagliato. Fai /leave poi /join di nuovo (ora usa VoiceRecvClient dall'inizio)."
-    try:
-        await guild.change_voice_state(channel=channel, self_deaf=False, self_mute=False)
-    except Exception as e:
-        log(f"[rec] change_voice_state warning: {e}")
+        return False, "VoiceClient sbagliato. Fai /leave poi /join di nuovo."
     if guild.id in CLIP_SINKS:
         try:
             vc.stop_listening()
