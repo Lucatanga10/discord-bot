@@ -172,6 +172,20 @@ async def on_message(message: discord.Message):
             pass
 
 
+async def _force_disconnect(guild):
+    vc = guild.voice_client
+    if vc:
+        try:
+            await vc.disconnect(force=True)
+        except Exception as e:
+            log(f"[disconnect] err: {e}")
+    try:
+        await guild.change_voice_state(channel=None)
+    except Exception as e:
+        log(f"[disconnect] change_state err: {e}")
+    await asyncio.sleep(2)
+
+
 async def _connect_channel(guild, channel_id: int) -> tuple[bool, str]:
     channel = guild.get_channel(channel_id)
     if channel is None:
@@ -186,22 +200,34 @@ async def _connect_channel(guild, channel_id: int) -> tuple[bool, str]:
     if vc and vc.is_connected():
         if vc.channel.id == channel.id:
             return True, f"Gia' in {channel.name}"
-        await vc.move_to(channel)
-        return True, f"Spostato in {channel.name}"
+        try:
+            await vc.move_to(channel)
+            return True, f"Spostato in {channel.name}"
+        except Exception as e:
+            log(f"[connect] move fallito: {e}, forzo disconnect")
+            await _force_disconnect(guild)
 
-    for attempt in range(1, 4):
+    if vc and not vc.is_connected():
+        await _force_disconnect(guild)
+
+    last_err = ""
+    for attempt in range(1, 7):
         try:
             await channel.connect(reconnect=True, timeout=30)
             try:
                 await guild.change_voice_state(channel=channel, self_deaf=False, self_mute=False)
             except Exception:
                 pass
-            log(f"[connect] entrato in {channel.name}")
+            log(f"[connect] entrato in {channel.name} (tentativo {attempt})")
             return True, f"Entrato in {channel.name}"
+        except discord.ClientException as e:
+            log(f"[connect] {attempt}/6 ClientException: {e}, disconnect e riprovo")
+            await _force_disconnect(guild)
         except Exception as e:
-            log(f"[connect] tentativo {attempt}/3: {e}")
+            last_err = f"{type(e).__name__}: {e}"
+            log(f"[connect] {attempt}/6 errore: {last_err}")
             await asyncio.sleep(2 * attempt)
-    return False, "Impossibile connettersi"
+    return False, f"Impossibile connettersi. Ultimo errore: {last_err}"
 
 
 @bot.slash_command(name="join", description="Entra in un canale vocale e resta lì")
@@ -228,17 +254,23 @@ async def leave_cmd(ctx: discord.ApplicationContext):
     s = load_state()
     s.pop(str(ctx.guild_id), None)
     save_state(s)
+    CLIP_RECORDINGS.pop(ctx.guild.id, None)
     vc = ctx.guild.voice_client
-    if vc and vc.is_connected():
-        if getattr(vc, "recording", False):
-            try:
+    if vc:
+        try:
+            if getattr(vc, "recording", False):
                 vc.stop_recording()
-            except Exception:
-                pass
-        await vc.disconnect(force=False)
-        await ctx.respond("Uscito.", ephemeral=True)
-    else:
-        await ctx.respond("Non ero in vocale.", ephemeral=True)
+        except Exception:
+            pass
+        try:
+            await vc.disconnect(force=True)
+        except Exception:
+            pass
+    try:
+        await ctx.guild.change_voice_state(channel=None)
+    except Exception:
+        pass
+    await ctx.respond("Uscito.", ephemeral=True)
 
 
 @bot.slash_command(name="status", description="Stato del bot")
