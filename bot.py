@@ -191,7 +191,11 @@ async def _connect_channel(guild, channel_id: int) -> tuple[bool, str]:
 
     for attempt in range(1, 4):
         try:
-            await channel.connect(self_deaf=False, self_mute=False, reconnect=True, timeout=30)
+            await channel.connect(reconnect=True, timeout=30)
+            try:
+                await guild.change_voice_state(channel=channel, self_deaf=False, self_mute=False)
+            except Exception:
+                pass
             log(f"[connect] entrato in {channel.name}")
             return True, f"Entrato in {channel.name}"
         except Exception as e:
@@ -262,7 +266,11 @@ async def soundboard_cmd(
         member = ctx.author
         if isinstance(member, discord.Member) and member.voice and member.voice.channel:
             try:
-                vc = await member.voice.channel.connect(self_deaf=False, self_mute=False)
+                vc = await member.voice.channel.connect()
+                try:
+                    await ctx.guild.change_voice_state(channel=member.voice.channel, self_deaf=False, self_mute=False)
+                except Exception:
+                    pass
             except Exception as e:
                 await ctx.followup.send(f"Errore: {e}", ephemeral=True)
                 return
